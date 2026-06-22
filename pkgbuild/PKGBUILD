@@ -1,0 +1,62 @@
+# Maintainer: Bruno Gonçalves <bigbruno@gmail.com>
+#
+# jemalloc carrying the C23 free_sized()/free_aligned_sized() NULL fix that GTK4
+# and GLib apps need. Stock jemalloc 5.3.1 asserts (debug) or corrupts the heap
+# on free_sized(NULL) — which glibc >= 2.41 and C++ sized-delete now trigger —
+# so any GTK4 program crashes when jemalloc is preloaded. This package is a
+# drop-in replacement for the repo jemalloc (provides/conflicts/replaces it).
+# Fix submitted upstream: https://github.com/jemalloc/jemalloc (PR pending).
+
+pkgname=jemalloc-gtk-fixed
+_srcname=jemalloc
+epoch=1
+pkgver=5.3.1
+# Static pkgrel — bump on packaging changes; the source tarball is pinned.
+pkgrel=1
+pkgdesc='jemalloc with the C23 free_sized NULL fix for GTK4/GLib apps (drop-in jemalloc replacement)'
+arch=('x86_64' 'aarch64')
+license=('BSD-2-Clause')
+url='https://jemalloc.net/'
+depends=('glibc' 'libgcc' 'libgcc_s.so' 'libstdc++' 'libstdc++.so')
+optdepends=('perl: for jeprof')
+provides=('jemalloc' 'libjemalloc.so')
+conflicts=('jemalloc')
+replaces=('jemalloc')
+source=("https://github.com/jemalloc/jemalloc/releases/download/${pkgver}/${_srcname}-${pkgver}.tar.bz2"
+        'free_sized-null-c23.patch')
+sha256sums=('3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92'
+            'SKIP')
+
+prepare() {
+    cd "${_srcname}-${pkgver}"
+    # The actual fix: C23 says free_sized(NULL, size) and
+    # free_aligned_sized(NULL, ...) are no-ops, like free(NULL). jemalloc 5.3.1
+    # passes NULL straight into sdallocx (which asserts ptr != NULL), so guard it
+    # the way free() already does.
+    patch -p1 < "${srcdir}/free_sized-null-c23.patch"
+    # Build fix only: GCC 15 / libstdc++ dropped the internal
+    # std::__throw_bad_alloc(); the public throw compiles everywhere and is what
+    # current jemalloc dev uses. No behavior change.
+    sed -i 's/std::__throw_bad_alloc();/throw std::bad_alloc();/' src/jemalloc_cpp.cpp
+}
+
+build() {
+    cd "${_srcname}-${pkgver}"
+    ./configure \
+        --enable-prof \
+        --enable-autogen \
+        --disable-static \
+        --prefix=/usr
+    make
+}
+
+check() {
+    cd "${_srcname}-${pkgver}"
+    make check
+}
+
+package() {
+    cd "${_srcname}-${pkgver}"
+    make DESTDIR="${pkgdir}" install
+    install -Dm644 COPYING -t "${pkgdir}/usr/share/licenses/${pkgname}/"
+}
